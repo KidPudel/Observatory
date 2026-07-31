@@ -46,10 +46,9 @@ remain in Application Support and are not removed by replacing the app.
 As an alternative to a downloaded archive:
 
 ```sh
-git clone <repository-url>
-cd activity-monitor
+git clone https://github.com/KidPudel/Observatory.git
+cd Observatory
 ./scripts/run.sh
 ```
 
-Replace `<repository-url>` with the repository URL shown on the GitHub release
-page. Xcode resolves the pinned GRDB dependency and builds Observatory locally.
+Xcode resolves the pinned GRDB dependency and builds Observatory locally.

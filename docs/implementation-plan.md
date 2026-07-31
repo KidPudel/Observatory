@@ -199,7 +199,7 @@ Exit gate:
 
 ## Phase 9 — Hardening and GitHub release
 
-Status: Ready for distribution
+Status: Release published; clean-account verification pending
 
 Dependencies: Phases 7 and 8
 

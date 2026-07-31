@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-31
 
-Observatory 0.1 is feature-complete and ready for distribution.
+Observatory 0.1 is feature-complete and published on GitHub.
 
 ## Included
 
@@ -21,12 +21,15 @@ The active product contract is in [`release-scope.md`](specifications/release-sc
 and the feature specifications. Verification history is in
 [`progress.md`](progress.md).
 
-## Distribution
+## Release
 
-The remaining work is to package and publish the release. Follow
-[`release-checklist.md`](release-checklist.md), then use the
+The source repository and downloadable `0.1.0` archive are published at
+[github.com/KidPudel/Observatory](https://github.com/KidPudel/Observatory).
+
+The remaining release gate is to use the
 [`installation guide`](installation.md) to validate the archive on a clean
-macOS account.
+macOS account. Track that check in
+[`release-checklist.md`](release-checklist.md).
 
 Current user-facing constraints are kept in
 [`known-limitations.md`](known-limitations.md).

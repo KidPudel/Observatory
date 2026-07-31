@@ -1743,6 +1743,7 @@ Verification:
   styles; the user's original Default icon-style preference was restored.
 - `codesign --verify --deep --strict` and `git diff --check` passed.
 - Next: include the layered icon in the packaged clean-account release check.
+
 ### 2026-07-31 — Complete Observatory repository identity
 
 - Renamed the Xcode project, scheme, application target, modules, source
@@ -1768,3 +1769,15 @@ Verification:
 - Replaced the local development history with one clean public root commit
   after saving the original history in an external recovery bundle.
 - Next task: create the GitHub repository and publish the release.
+
+### 2026-07-31 — GitHub repository and 0.1.0 release
+
+- Created the public `KidPudel/Observatory` repository with `gh` and pushed the
+  clean `main` branch.
+- Built the optimized `Observatory-0.1.0-macos.zip` archive and matching SHA-256
+  checksum through the release workflow.
+- Verified the complete automated test suite, archive contents, bundle name,
+  bundle identifier, version, checksum, and strict code-signing validity.
+- Added the public repository and release-download links to the user-facing
+  documentation.
+- Next task: validate installation and first launch on a clean macOS account.

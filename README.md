@@ -10,6 +10,13 @@ Available only on macOS.
 
 Observatory is local-first. All the data recorded stays only on your local device.
 
+## Download
+
+Download the latest build from
+[GitHub Releases](https://github.com/KidPudel/Observatory/releases/latest).
+Read the [installation guide](docs/installation.md) before opening an
+ad-hoc-signed build for the first time.
+
 ## Requirements
 
 - macOS 14 or later
