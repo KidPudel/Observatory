@@ -2,9 +2,8 @@
 
 Last updated: 2026-08-01
 
-Observatory 0.1 is feature-complete and published on GitHub. A local `0.1.1`
-release candidate now packages the post-release high-priority reliability
-hardening; it has not yet been published.
+Observatory `0.1.1` is feature-complete and published on GitHub. It packages
+the post-release high-priority reliability hardening described below.
 
 ## Included
 
@@ -30,16 +29,15 @@ and the feature specifications. Verification history is in
 
 ## Release
 
-The `main` branch contains the `0.1.1` candidate. The latest downloadable
-GitHub release remains `0.1.0` at
+The `main` branch and latest downloadable GitHub release are `0.1.1` at
 [github.com/KidPudel/Observatory](https://github.com/KidPudel/Observatory).
 
-The `0.1.1` candidate is versioned as build 2 and has passed automated tests,
+The release is versioned as build 2 and has passed automated tests,
 sampler-budget measurement, optimized universal archiving, code-signature
-verification, and checksum verification. The remaining release gates are to
-perform targeted hands-on validation of the hardening changes, then use the
-[`installation guide`](installation.md) to validate the archive on a clean
-macOS account. Track that check in
+verification, and checksum verification. Publication was explicitly approved
+with hands-on validation still outstanding. The remaining post-release checks
+are targeted validation of the hardening changes and clean-account installation
+through the [`installation guide`](installation.md). Track those checks in
 [`release-checklist.md`](release-checklist.md).
 
 Current user-facing constraints are kept in

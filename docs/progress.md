@@ -1836,3 +1836,21 @@ Verification:
 - No app was launched or UI automation used.
 - Next: complete the targeted controlled-test, foreground-loss, storage-failure,
   and clean-account checks before tagging and publishing `v0.1.1`.
+
+### 2026-08-01 — GitHub 0.1.1 publication
+
+- Published `v0.1.1` as the latest GitHub release with the verified universal
+  macOS ZIP and its SHA-256 checksum.
+- Used the prepared reliability-focused release notes and linked the tagged
+  installation, privacy, and known-limitations documents.
+- Publication was explicitly approved with the hands-on release checks still
+  outstanding; those checks remain tracked rather than being marked verified.
+
+Verification:
+
+- Reverified the archive's strict code signature and SHA-256 checksum
+  immediately before publication.
+- Confirmed that no `v0.1.1` tag or release existed before creating it.
+- No app was launched or UI automation used.
+- Next: complete and record the controlled-test, foreground-loss,
+  storage-failure, and clean-account installation checks.
