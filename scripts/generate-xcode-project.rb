@@ -40,8 +40,8 @@ app.build_configurations.each do |configuration|
   settings.delete("ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME")
   settings["ASSETCATALOG_COMPILER_APPICON_NAME"] = "observatory_icon"
   settings["PRODUCT_NAME"] = "Observatory"
-  settings["MARKETING_VERSION"] = "0.1.0"
-  settings["CURRENT_PROJECT_VERSION"] = "1"
+  settings["MARKETING_VERSION"] = "0.1.1"
+  settings["CURRENT_PROJECT_VERSION"] = "2"
   settings["INFOPLIST_KEY_CFBundleDisplayName"] = "Observatory"
   settings["INFOPLIST_KEY_LSApplicationCategoryType"] = "public.app-category.utilities"
   settings["ENABLE_APP_SANDBOX"] = "NO"

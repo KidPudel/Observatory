@@ -1811,3 +1811,28 @@ Verification:
   workflow.
 - Next: manually validate one controlled test, automatic foreground loss, and a
   forced Application Support failure before packaging the next release.
+
+### 2026-08-01 — Observatory 0.1.1 release candidate
+
+- Bumped the app from `0.1.0` build 1 to `0.1.1` build 2 in both the checked-in
+  project and project generator.
+- Updated the installation checksum command and prepared GitHub release notes
+  for the `v0.1.1` tag.
+- Kept artifact generation and GitHub publication separate; the existing
+  version-driven release script required no behavior change.
+- Built the local universal release archive, ZIP, and matching SHA-256 file.
+
+Verification:
+
+- The sampler probe passed with 2,500 of 2,500 samples available, a 0.111 ms
+  average pass, 0.161 ms p95, and an estimated one-second-cadence cost of
+  0.011% of one CPU core.
+- `./scripts/release.sh` passed the complete 44-test suite, created the
+  optimized `Observatory-0.1.1.xcarchive`, and verified its ad-hoc signature.
+- The archived app reports version `0.1.1`, build `2`, and contains both arm64
+  and x86_64 executable slices.
+- The generated `Observatory-0.1.1-macos.zip` checksum verified successfully,
+  and `git diff --check` passed.
+- No app was launched or UI automation used.
+- Next: complete the targeted controlled-test, foreground-loss, storage-failure,
+  and clean-account checks before tagging and publishing `v0.1.1`.

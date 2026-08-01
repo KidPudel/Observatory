@@ -14,7 +14,7 @@ Download both the Observatory ZIP and its `.sha256` file from the same GitHub
 release. In Terminal, change to the download directory and run:
 
 ```sh
-shasum -a 256 -c Observatory-0.1.0-macos.zip.sha256
+shasum -a 256 -c Observatory-0.1.1-macos.zip.sha256
 ```
 
 Continue only when the command reports `OK`.
