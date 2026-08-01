@@ -1,27 +1,43 @@
 # Observatory
 
-Observatory — activity monitor, but more. Created for developers and power users who wants more.
+![Observatory telescope icon](docs/images/observatory-icon-showcase.png)
 
-1. groups related processes into understandable application totals;
-2. records usage tests from one up to 4 applications at once to see and compare the results;
-3. stores test results for You to analyze and compare with any other result.
+Observatory — activity monitor, but more. Created for developers and power
+users who expect more than a long list of processes.
+
+1. groups related processes into understandable application totals, with CPU,
+   memory, disk activity, wakeups, process count, and state in one place.
+2. records controlled usage tests for one to four applications at once, with
+   manual and automatic test modes, optional warm-up, and repeated rounds.
+3. stores test results for you to inspect later and compare with results from
+   any other saved test.
 
 Available only on macOS.
 
-Observatory is local-first. All the data recorded stays only on your local device.
+Observatory is local-first. All recorded data stays on your device. The live
+**Now** view keeps only a rolling 60-second chart in memory; persistent
+recording begins only when you start a test.
+
+![Observatory](docs/images/observatory-yt-thumbnail.png)
 
 ## Download
 
 Download the latest build from
 [GitHub Releases](https://github.com/KidPudel/Observatory/releases/latest).
-Read the [installation guide](docs/installation.md) before opening an
-ad-hoc-signed build for the first time.
+
+The current GitHub build is ad-hoc signed rather than notarized. Read the
+[installation guide](docs/installation.md) to verify the download and open it
+for the first time without disabling Gatekeeper.
 
 ## Requirements
 
 - macOS 14 or later
 - Apple silicon for the currently tested release path
 - Xcode 26 or later when building from source
+
+Some protected or short-lived processes may have unavailable measurements.
+Observatory shows them as unavailable instead of silently treating them as
+zero. See [known limitations](docs/known-limitations.md) for details.
 
 ## Build and run
 
@@ -31,7 +47,9 @@ From the repository root:
 ./scripts/run.sh
 ```
 
-This builds the Debug configuration into `.build` and opens `Observatory.app`.
+This resolves the pinned dependencies, builds the Debug configuration into
+`.build`, and opens `Observatory.app`. Xcode is optional unless you need its
+debugger, previews, or another IDE-only tool.
 
 To produce an ad-hoc-signed release candidate, its ZIP archive, and a SHA-256
 checksum:
