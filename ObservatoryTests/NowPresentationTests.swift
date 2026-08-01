@@ -52,6 +52,32 @@ struct NowPresentationTests {
     }
 
     @Test
+    func wallClockRollbackClearsFutureLiveCPUAndTimelinePoints() throws {
+        let fixture = Fixture()
+        var accumulator = NowSnapshotAccumulator()
+        var timeline = NowTimelineAccumulator(windowDuration: 60)
+        let future = Date(timeIntervalSince1970: 100)
+        let corrected = Date(timeIntervalSince1970: 10)
+
+        timeline.ingest(accumulator.ingest(
+            grouping: fixture.grouping(cpu: 9, memory: 900, date: future),
+            processes: [fixture.process],
+            samples: [fixture.sample(cpu: 9, memory: 900, date: future)],
+            capturedAt: future
+        ))
+        let snapshot = accumulator.ingest(
+            grouping: fixture.grouping(cpu: 2, memory: 200, date: corrected),
+            processes: [fixture.process],
+            samples: [fixture.sample(cpu: 2, memory: 200, date: corrected)],
+            capturedAt: corrected
+        )
+        timeline.ingest(snapshot)
+
+        #expect(try #require(snapshot.applications.first).metrics.cpuCoreUsage == 2)
+        #expect(timeline.points.map(\.capturedAt) == [corrected])
+    }
+
+    @Test
     func missingMetricsStayUnavailableAndMakeTotalPartial() throws {
         let fixture = Fixture()
         let date = Date(timeIntervalSince1970: 10)

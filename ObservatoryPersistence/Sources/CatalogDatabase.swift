@@ -15,6 +15,35 @@ public actor CatalogDatabase: GroupingRulePersisting, SessionPersisting {
         try Self.makeMigrator().migrate(databaseQueue)
     }
 
+    public func createSession(
+        _ session: MonitoringSession,
+        rounds: [SessionRound]
+    ) throws {
+        try databaseQueue.write { database in
+            let terminalStatuses = [
+                MonitoringSessionStatus.completed.rawValue,
+                MonitoringSessionStatus.cancelled.rawValue,
+                MonitoringSessionStatus.failed.rawValue
+            ]
+            let unfinishedExists = try SessionRecord
+                .filter(
+                    SessionRecord.Columns.kind
+                        == MonitoringSessionKind.controlledTest.rawValue
+                )
+                .filter(!terminalStatuses.contains(SessionRecord.Columns.status))
+                .fetchCount(database) > 0
+            guard !unfinishedExists else {
+                throw ControlledTestEngineError.activeControlledTest
+            }
+
+            try SessionRecord(session: session).save(database)
+            try SessionPayloadRecord(session: session).save(database)
+            for round in rounds {
+                try SessionRoundRecord(round: round).save(database)
+            }
+        }
+    }
+
     public func saveSession(_ session: MonitoringSession) throws {
         try databaseQueue.write { database in
             try SessionRecord(session: session).save(database)
@@ -100,14 +129,37 @@ public actor CatalogDatabase: GroupingRulePersisting, SessionPersisting {
 
     public func samples(sessionID: UUID) throws -> [SessionMetricSample] {
         try databaseQueue.read { database in
-            try SessionMetricSampleRecord
+            let roundOrder = Dictionary(
+                uniqueKeysWithValues: try SessionRoundRecord
+                    .filter(SessionRoundRecord.Columns.sessionID == sessionID.uuidString)
+                    .fetchAll(database)
+                    .map { record in
+                        let round = try record.domainValue()
+                        return (round.id, round.sequenceNumber)
+                    }
+            )
+            return try SessionMetricSampleRecord
                 .filter(
                     SessionMetricSampleRecord.Columns.sessionID
                         == sessionID.uuidString
                 )
-                .order(SessionMetricSampleRecord.Columns.capturedAt)
                 .fetchAll(database)
                 .map { try $0.domainValue() }
+                .sorted { lhs, rhs in
+                    let lhsRound = roundOrder[lhs.roundID] ?? .max
+                    let rhsRound = roundOrder[rhs.roundID] ?? .max
+                    if lhsRound != rhsRound {
+                        return lhsRound < rhsRound
+                    }
+                    if lhs.elapsed != rhs.elapsed {
+                        return lhs.elapsed < rhs.elapsed
+                    }
+                    if lhs.application != rhs.application {
+                        return lhs.application.bundleIdentifier
+                            < rhs.application.bundleIdentifier
+                    }
+                    return lhs.capturedAt < rhs.capturedAt
+                }
         }
     }
 

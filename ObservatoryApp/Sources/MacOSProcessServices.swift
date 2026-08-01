@@ -63,7 +63,16 @@ public actor MacOSApplicationDiscovery: ApplicationDiscovering {
             )
         }
 
-        return discovered.sorted {
+        let uniqueApplications = Dictionary(
+            discovered.map { ($0.identity, $0) },
+            uniquingKeysWith: { first, second in
+                if first.state == .frontmost { return first }
+                if second.state == .frontmost { return second }
+                return first.primaryProcessIdentifier
+                    <= second.primaryProcessIdentifier ? first : second
+            }
+        ).values
+        return uniqueApplications.sorted {
             $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
         }
     }
@@ -196,6 +205,10 @@ public actor MacOSProcessSampler: ProcessDiscovering, ProcessInventorying, Proce
 
             return calculator.calculate(from: rawSample)
         }
+    }
+
+    public func resetBaselines(for processes: [ProcessIdentity]) {
+        calculator.resetBaselines(for: processes)
     }
 
     private func resourceUsage(for processIdentifier: pid_t) -> rusage_info_v4? {

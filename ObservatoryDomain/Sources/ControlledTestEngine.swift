@@ -95,9 +95,7 @@ public actor ControlledTestEngine {
         guard configuration.isValid else {
             throw ControlledTestEngineError.invalidConfiguration
         }
-        guard timingTask == nil, session == nil,
-              try await persistence.unfinishedControlledSession() == nil
-        else {
+        guard timingTask == nil, session == nil else {
             throw ControlledTestEngineError.activeControlledTest
         }
 
@@ -123,23 +121,24 @@ public actor ControlledTestEngine {
             createdAt: createdAt
         )
 
-        do {
-            try await persistence.saveSession(newSession)
-            var sequence = 0
-            var newRounds: [SessionRound] = []
-            for roundNumber in 1...configuration.roundCount {
-                for application in applications {
-                    sequence += 1
-                    let round = SessionRound(
+        var sequence = 0
+        var newRounds: [SessionRound] = []
+        for roundNumber in 1...configuration.roundCount {
+            for application in applications {
+                sequence += 1
+                newRounds.append(
+                    SessionRound(
                         sessionID: newSession.id,
                         application: application,
                         roundNumber: roundNumber,
                         sequenceNumber: sequence
                     )
-                    try await persistence.saveRound(round)
-                    newRounds.append(round)
-                }
+                )
             }
+        }
+
+        do {
+            try await persistence.createSession(newSession, rounds: newRounds)
             session = newSession
             rounds = newRounds
             samples = []
@@ -180,7 +179,7 @@ public actor ControlledTestEngine {
         rounds[index] = rounds[index].updating(
             status: roundStatus,
             startedAt: now,
-            measuredAt: configuration.warmUpDuration == 0 ? now : nil
+            measuredAt: nil
         )
         session = currentSession.updating(
             status: sessionStatus,
@@ -285,7 +284,11 @@ public actor ControlledTestEngine {
         guard let currentSession = session else {
             throw ControlledTestEngineError.noSession
         }
-        timingTask?.cancel()
+        let activeTask = timingTask
+        activeTask?.cancel()
+        if let activeTask {
+            await activeTask.value
+        }
         timingTask = nil
         remainingDuration = nil
         let now = await clock.now
@@ -480,7 +483,7 @@ public actor ControlledTestEngine {
             configuration.warmUpDuration > 0 ? .warmingUp : .recording
         rounds[index] = rounds[index].updating(
             status: roundStatus,
-            measuredAt: configuration.warmUpDuration == 0 ? now : nil
+            measuredAt: nil
         )
         session = currentSession.updating(
             status: sessionStatus,
@@ -508,24 +511,36 @@ public actor ControlledTestEngine {
         let application = rounds[initialIndex].application
         let totalDuration =
             configuration.warmUpDuration + configuration.measuredDuration
-        let startedAt = await clock.now
-        var lastTick = startedAt
-        var nextTickAt = startedAt
+        await sampler.prepareForRound(
+            application: application.identity,
+            sessionID: currentSession.id,
+            at: await clock.now
+        )
+        do {
+            try Task.checkCancellation()
+        } catch {
+            return
+        }
+        let startedMonotonic = await clock.monotonicNow
+        var lastTick = startedMonotonic
+        var nextTickAt = startedMonotonic
         var excludedDiscontinuity: TimeInterval = 0
 
         do {
             while !Task.isCancelled {
                 let capturedAt = await clock.now
-                let gap = capturedAt.timeIntervalSince(lastTick)
+                let capturedMonotonic = await clock.monotonicNow
+                let gap = durationSeconds(capturedMonotonic - lastTick)
                 if gap > 2.5 {
                     excludedDiscontinuity += max(0, gap - 1)
-                    nextTickAt = capturedAt
+                    nextTickAt = capturedMonotonic
                     notice = "Timing paused across a sleep or clock discontinuity."
                 }
-                lastTick = capturedAt
+                lastTick = capturedMonotonic
                 let elapsed = max(
                     0,
-                    capturedAt.timeIntervalSince(startedAt) - excludedDiscontinuity
+                    durationSeconds(capturedMonotonic - startedMonotonic)
+                        - excludedDiscontinuity
                 )
                 if elapsed >= totalDuration {
                     break
@@ -544,6 +559,7 @@ public actor ControlledTestEngine {
                     sessionID: currentSession.id,
                     at: capturedAt
                 )
+                try Task.checkCancellation()
                 guard let reading = readings.first(where: {
                     $0.application == application.identity
                 }) else {
@@ -555,12 +571,23 @@ public actor ControlledTestEngine {
                     )
                     return
                 }
+                if automaticSequence, let activation,
+                   !(await activation.isFrontmost(application.identity)) {
+                    try Task.checkCancellation()
+                    try await interruptRound(
+                        id: roundID,
+                        reason: "\(application.displayName) was no longer the foreground application.",
+                        at: capturedAt,
+                        automaticSequence: true
+                    )
+                    return
+                }
                 let sample = SessionMetricSample(
                     sessionID: currentSession.id,
                     roundID: roundID,
                     application: application.identity,
                     capturedAt: reading.capturedAt,
-                    elapsed: max(0, elapsed - configuration.warmUpDuration),
+                    elapsed: elapsed - configuration.warmUpDuration,
                     isWarmUp: isWarmUp,
                     state: reading.state,
                     metrics: reading.metrics,
@@ -568,10 +595,11 @@ public actor ControlledTestEngine {
                 )
                 try await persistence.saveSample(sample)
                 samples.append(sample)
+                try Task.checkCancellation()
 
-                nextTickAt = nextTickAt.addingTimeInterval(1)
-                let workFinishedAt = await clock.now
-                let delay = nextTickAt.timeIntervalSince(workFinishedAt)
+                nextTickAt += .seconds(1)
+                let workFinishedAt = await clock.monotonicNow
+                let delay = durationSeconds(nextTickAt - workFinishedAt)
                 if delay > 0 {
                     try await clock.sleep(for: .seconds(delay))
                 } else {
@@ -598,8 +626,9 @@ public actor ControlledTestEngine {
     ) async throws {
         guard !isWarmUp,
               let index = rounds.firstIndex(where: { $0.id == roundID }),
-              rounds[index].status == .warmingUp,
-              let currentSession = session
+              let currentSession = session,
+              rounds[index].status == .warmingUp
+                || rounds[index].measuredAt == nil
         else {
             return
         }
@@ -769,5 +798,11 @@ public actor ControlledTestEngine {
         remainingDuration = nil
         recoveryRequired = false
         notice = nil
+    }
+
+    private func durationSeconds(_ duration: Duration) -> TimeInterval {
+        let components = duration.components
+        return Double(components.seconds)
+            + Double(components.attoseconds) / 1_000_000_000_000_000_000
     }
 }

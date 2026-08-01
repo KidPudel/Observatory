@@ -388,7 +388,9 @@ public struct ResultTimeline: Equatable, Sendable {
             }
             let elapsed: TimeInterval
             if sample.isWarmUp {
-                if let measuredAt = round.measuredAt {
+                if sample.elapsed < 0 {
+                    elapsed = sample.elapsed
+                } else if let measuredAt = round.measuredAt {
                     elapsed = min(
                         -Double.ulpOfOne,
                         sample.capturedAt.timeIntervalSince(measuredAt)

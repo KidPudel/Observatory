@@ -2,6 +2,7 @@ import Foundation
 
 public protocol ObservatoryClock: Sendable {
     var now: Date { get async }
+    var monotonicNow: Duration { get async }
     func sleep(for duration: Duration) async throws
 }
 
@@ -11,6 +12,13 @@ public protocol ApplicationDiscovering: Sendable {
 
 public protocol ProcessSampling: Sendable {
     func sample(processes: [ProcessIdentity], at date: Date) async -> [ProcessSample]
+    func resetBaselines(for processes: [ProcessIdentity]) async
+}
+
+public extension ProcessSampling {
+    func resetBaselines(for processes: [ProcessIdentity]) async {
+        _ = processes
+    }
 }
 
 public protocol ProcessInventorying: Sendable {
@@ -49,6 +57,11 @@ public protocol StorageRootAccessing: Sendable {
 }
 
 public protocol SessionMetricSampling: Sendable {
+    func prepareForRound(
+        application: ApplicationIdentity,
+        sessionID: UUID,
+        at date: Date
+    ) async
     func readings(
         for applications: [ApplicationIdentity],
         sessionID: UUID,
@@ -56,7 +69,23 @@ public protocol SessionMetricSampling: Sendable {
     ) async -> [ApplicationMetricReading]
 }
 
+public extension SessionMetricSampling {
+    func prepareForRound(
+        application: ApplicationIdentity,
+        sessionID: UUID,
+        at date: Date
+    ) async {
+        _ = application
+        _ = sessionID
+        _ = date
+    }
+}
+
 public protocol SessionPersisting: Sendable {
+    func createSession(
+        _ session: MonitoringSession,
+        rounds: [SessionRound]
+    ) async throws
     func saveSession(_ session: MonitoringSession) async throws
     func session(id: UUID) async throws -> MonitoringSession?
     func sessions() async throws -> [MonitoringSession]
@@ -72,4 +101,19 @@ public protocol SessionPersisting: Sendable {
     func summaries(sessionID: UUID) async throws -> [ApplicationResultSummary]
     func deleteSamples(roundID: UUID) async throws
     func deleteSession(id: UUID) async throws
+}
+
+public extension SessionPersisting {
+    func createSession(
+        _ session: MonitoringSession,
+        rounds: [SessionRound]
+    ) async throws {
+        if try await unfinishedControlledSession() != nil {
+            throw ControlledTestEngineError.activeControlledTest
+        }
+        try await saveSession(session)
+        for round in rounds {
+            try await saveRound(round)
+        }
+    }
 }

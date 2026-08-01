@@ -5,6 +5,12 @@ public struct ProcessSampleCalculator: Sendable {
 
     public init() {}
 
+    public mutating func resetBaselines(for processes: [ProcessIdentity]) {
+        for process in processes {
+            baselines.removeValue(forKey: process)
+        }
+    }
+
     public mutating func calculate(from rawSample: RawProcessSample) -> ProcessSample {
         defer {
             if rawSample.availability == .available, rawSample.counters != nil {

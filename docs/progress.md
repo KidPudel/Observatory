@@ -1781,3 +1781,33 @@ Verification:
 - Added the public repository and release-download links to the user-facing
   documentation.
 - Next task: validate installation and first launch on a clean macOS account.
+
+### 2026-08-01 — Critical and high-priority reliability hardening
+
+- Made controlled-test session and round creation one database transaction,
+  prevented a second unfinished test, and made discard wait for in-flight
+  sampling before deleting persisted data.
+- Moved test cadence and elapsed-time accounting to a monotonic clock, retained
+  signed warm-up elapsed values, and made persisted sample order independent of
+  wall-clock changes.
+- Separated raw controlled-test readings from the rolling live-view CPU
+  presentation and reset process counter baselines at each round boundary.
+- Revalidated automatic foreground ownership throughout a round, refreshed
+  running-application state every collection, deduplicated application
+  identities, and constrained the app to one main window/service graph.
+- Removed temporary and in-memory persistence fallbacks. Storage startup
+  failures now remain visible and disable recording so results cannot appear
+  saved and then disappear.
+- Reset live rolling state after wall-clock rollback so chart and CPU windows do
+  not retain future-dated points.
+
+Verification:
+
+- The complete 44-test Debug suite passed, including new concurrent creation,
+  cancellation race, round-baseline reset, and wall-clock rollback regressions.
+- The Debug test build and universal optimized Release application build
+  succeeded across all Swift 6 modules; `git diff --check` passed.
+- No app was launched or UI automation used, per the requested code-only
+  workflow.
+- Next: manually validate one controlled test, automatic foreground loss, and a
+  forced Application Support failure before packaging the next release.

@@ -3,8 +3,19 @@ import Foundation
 import ObservatoryDomain
 
 struct SystemObservatoryClock: ObservatoryClock {
+    private let clock = ContinuousClock()
+    private let origin: ContinuousClock.Instant
+
+    init() {
+        origin = clock.now
+    }
+
     var now: Date {
         get async { Date() }
+    }
+
+    var monotonicNow: Duration {
+        get async { origin.duration(to: clock.now) }
     }
 
     func sleep(for duration: Duration) async throws {

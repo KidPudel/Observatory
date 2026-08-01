@@ -335,6 +335,9 @@ public struct NowTimelineAccumulator: Equatable, Sendable {
     public mutating func ingest(_ snapshot: NowSnapshot) {
         guard snapshot.capturedAt != .distantPast else { return }
         let point = NowTimelinePoint(snapshot: snapshot)
+        if let last = points.last, point.capturedAt < last.capturedAt {
+            points.removeAll(keepingCapacity: true)
+        }
         if points.last?.capturedAt == point.capturedAt {
             points[points.count - 1] = point
         } else {
@@ -356,6 +359,7 @@ public struct NowSnapshotAccumulator: Sendable {
     private let rollingWindow: TimeInterval
     private var cpuHistory: [ApplicationIdentity: [TimedCPUValue]] = [:]
     private var memoryPeaks: [ApplicationIdentity: UInt64] = [:]
+    private var lastCapturedAt: Date?
 
     public init(rollingWindow: TimeInterval = 5) {
         self.rollingWindow = rollingWindow
@@ -367,6 +371,10 @@ public struct NowSnapshotAccumulator: Sendable {
         samples: [ProcessSample],
         capturedAt: Date
     ) -> NowSnapshot {
+        if let lastCapturedAt, capturedAt < lastCapturedAt {
+            cpuHistory.removeAll(keepingCapacity: true)
+        }
+        lastCapturedAt = capturedAt
         let processByIdentity = Dictionary(
             processes.map { ($0.identity, $0) },
             uniquingKeysWith: { first, _ in first }

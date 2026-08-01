@@ -5,6 +5,7 @@ import ObservatoryPersistence
 
 struct NowCollectionFrame: Sendable {
     let snapshot: NowSnapshot
+    let sessionReadings: [ApplicationMetricReading]
     let warning: String?
 }
 
@@ -20,47 +21,63 @@ actor LiveNowCollector {
     private var cachedApplications: [DiscoveredApplication] = []
     private var cachedProcesses: [DiscoveredProcess] = []
     private var cachedOwnership: GroupingResult?
-    private var lastInventoryRefresh: Date?
+    private let cadenceClock = ContinuousClock()
+    private var lastInventoryRefresh: ContinuousClock.Instant?
+    private var lastCollectionInstant: ContinuousClock.Instant?
     private var lastFrame: NowCollectionFrame?
-    private let inventoryRefreshInterval: TimeInterval = 5
-    private let minimumSampleInterval: TimeInterval = 0.75
+    private let inventoryRefreshInterval = Duration.seconds(5)
+    private let minimumSampleInterval = Duration.milliseconds(750)
 
     init(
         applicationDiscovery: any ApplicationDiscovering,
         processDiscovery: any ProcessDiscovering,
         processSampler: any ProcessSampling,
-        rulePersistence: (any GroupingRulePersisting)?
+        rulePersistence: (any GroupingRulePersisting)?,
+        persistenceWarning: String? = nil
     ) {
         self.applicationDiscovery = applicationDiscovery
         self.processDiscovery = processDiscovery
         self.processSampler = processSampler
         self.rulePersistence = rulePersistence
+        self.persistenceWarning = persistenceWarning
     }
 
     func collect(at capturedAt: Date = Date()) async -> NowCollectionFrame {
-        if let lastFrame,
-           capturedAt.timeIntervalSince(lastFrame.snapshot.capturedAt)
+        let collectionInstant = cadenceClock.now
+        if let lastFrame, let lastCollectionInstant,
+           lastCollectionInstant.duration(to: collectionInstant)
             < minimumSampleInterval {
             return lastFrame
         }
         await loadRulesIfNeeded()
+        let discoveredApplications = await applicationDiscovery.runningApplications()
         let shouldRefreshInventory =
             cachedOwnership == nil
-            || capturedAt.timeIntervalSince(lastInventoryRefresh ?? .distantPast)
-                >= inventoryRefreshInterval
+            || lastInventoryRefresh.map {
+                $0.duration(to: collectionInstant) >= inventoryRefreshInterval
+            } ?? true
+            || applicationTopologyChanged(
+                from: cachedApplications,
+                to: discoveredApplications
+            )
 
         let ownershipOnly: GroupingResult
         if shouldRefreshInventory {
-            cachedApplications = await applicationDiscovery.runningApplications()
+            cachedApplications = discoveredApplications
             cachedProcesses = await processDiscovery.runningProcesses()
             ownershipOnly = grouper.group(
                 applications: cachedApplications,
                 processes: cachedProcesses
             )
             cachedOwnership = ownershipOnly
-            lastInventoryRefresh = capturedAt
+            lastInventoryRefresh = collectionInstant
         } else {
-            ownershipOnly = cachedOwnership!
+            cachedApplications = discoveredApplications
+            ownershipOnly = replacingApplications(
+                in: cachedOwnership!,
+                with: discoveredApplications
+            )
+            cachedOwnership = ownershipOnly
         }
         let sampledIdentities = ownershipOnly.ownerships.compactMap { ownership in
             if ownership.application != nil
@@ -75,17 +92,59 @@ actor LiveNowCollector {
             at: capturedAt
         )
         let grouping = grouper.applying(samples: samples, to: ownershipOnly)
+        let snapshot = accumulator.ingest(
+            grouping: grouping,
+            processes: cachedProcesses,
+            samples: samples,
+            capturedAt: capturedAt
+        )
+        let presentedApplications = Dictionary(
+            uniqueKeysWithValues: snapshot.applications.map { ($0.id, $0) }
+        )
         let frame = NowCollectionFrame(
-            snapshot: accumulator.ingest(
-                grouping: grouping,
-                processes: cachedProcesses,
-                samples: samples,
-                capturedAt: capturedAt
-            ),
+            snapshot: snapshot,
+            sessionReadings: grouping.groups.map { group in
+                let presented = presentedApplications[group.application.identity]
+                return ApplicationMetricReading(
+                    application: group.application.identity,
+                    capturedAt: capturedAt,
+                    state: presented?.state ?? group.application.state,
+                    metrics: group.metrics,
+                    isPartial: presented?.isPartialTotal ?? true
+                )
+            },
             warning: persistenceWarning
         )
         lastFrame = frame
+        lastCollectionInstant = collectionInstant
         return frame
+    }
+
+    func prepareForRound(
+        application: ApplicationIdentity,
+        sessionID: UUID,
+        at date: Date
+    ) async {
+        _ = sessionID
+        _ = date
+        await loadRulesIfNeeded()
+        let applications = await applicationDiscovery.runningApplications()
+        let processes = await processDiscovery.runningProcesses()
+        let ownership = grouper.group(
+            applications: applications,
+            processes: processes
+        )
+        cachedApplications = applications
+        cachedProcesses = processes
+        cachedOwnership = ownership
+        lastInventoryRefresh = cadenceClock.now
+
+        let identities = ownership.groups
+            .first { $0.application.identity == application }?
+            .members.map(\.process) ?? []
+        await processSampler.resetBaselines(for: identities)
+        lastFrame = nil
+        lastCollectionInstant = nil
     }
 
     func setRule(
@@ -105,6 +164,7 @@ actor LiveNowCollector {
         grouper.setRule(rule)
         cachedOwnership = nil
         lastFrame = nil
+        lastCollectionInstant = nil
     }
 
     func resetRules(for application: ApplicationIdentity? = nil) async throws {
@@ -115,6 +175,7 @@ actor LiveNowCollector {
         grouper.resetRules(for: application)
         cachedOwnership = nil
         lastFrame = nil
+        lastCollectionInstant = nil
     }
 
     private func loadRulesIfNeeded() async {
@@ -129,8 +190,52 @@ actor LiveNowCollector {
                 rules: rulePersistence.groupingRules()
             )
         } catch {
-            persistenceWarning = "Saved grouping decisions could not be loaded."
+            if persistenceWarning == nil {
+                persistenceWarning = "Saved grouping decisions could not be loaded."
+            }
         }
+    }
+
+    private func applicationTopologyChanged(
+        from previous: [DiscoveredApplication],
+        to current: [DiscoveredApplication]
+    ) -> Bool {
+        guard previous.count == current.count else { return true }
+        let previousByIdentity = Dictionary(
+            uniqueKeysWithValues: previous.map { ($0.identity, $0) }
+        )
+        return current.contains { application in
+            guard let old = previousByIdentity[application.identity] else {
+                return true
+            }
+            return old.primaryProcessIdentifier != application.primaryProcessIdentifier
+                || old.primaryProcess != application.primaryProcess
+        }
+    }
+
+    private func replacingApplications(
+        in result: GroupingResult,
+        with applications: [DiscoveredApplication]
+    ) -> GroupingResult {
+        let applicationsByIdentity = Dictionary(
+            uniqueKeysWithValues: applications.map { ($0.identity, $0) }
+        )
+        return GroupingResult(
+            groups: result.groups.compactMap { group in
+                guard let application = applicationsByIdentity[
+                    group.application.identity
+                ] else {
+                    return nil
+                }
+                return ApplicationGroupSnapshot(
+                    application: application,
+                    members: group.members,
+                    confidence: group.confidence,
+                    metrics: group.metrics
+                )
+            },
+            ownerships: result.ownerships
+        )
     }
 
 }
@@ -144,15 +249,8 @@ extension LiveNowCollector: SessionMetricSampling {
         _ = sessionID
         let applicationIDs = Set(applications)
         let frame = await collect(at: date)
-        return frame.snapshot.applications.compactMap { snapshot in
-            guard applicationIDs.contains(snapshot.id) else { return nil }
-            return ApplicationMetricReading(
-                application: snapshot.id,
-                capturedAt: frame.snapshot.capturedAt,
-                state: snapshot.state,
-                metrics: snapshot.metrics,
-                isPartial: snapshot.isPartialTotal
-            )
+        return frame.sessionReadings.filter {
+            applicationIDs.contains($0.application)
         }
     }
 }
@@ -285,23 +383,18 @@ enum AppServices {
         migrateCPURepresentationDefault()
         let sampler = MacOSProcessSampler()
         let discovery = MacOSApplicationDiscovery(processSampler: sampler)
-        let catalog = makeCatalog()
+        let persistence = makePersistence()
         let collector = LiveNowCollector(
             applicationDiscovery: discovery,
             processDiscovery: sampler,
             processSampler: sampler,
-            rulePersistence: catalog
-        )
-        let storage = LocalSessionStorage(
-            recordingsRoot: applicationDirectory().appending(
-                path: "Recordings",
-                directoryHint: .isDirectory
-            )
+            rulePersistence: persistence.catalog,
+            persistenceWarning: persistence.warning
         )
         let sessionEngine = ControlledTestEngine(
-            persistence: catalog,
+            persistence: persistence.catalog,
             sampler: collector,
-            storage: storage,
+            storage: persistence.storage,
             clock: SystemObservatoryClock(),
             activation: MacOSApplicationActivation()
         )
@@ -331,43 +424,124 @@ enum AppServices {
         defaults.set(true, forKey: migrationKey)
     }
 
-    private static func makeCatalog() -> CatalogDatabase {
+    private static func makePersistence() -> (
+        catalog: any GroupingRulePersisting & SessionPersisting,
+        storage: any StorageRootAccessing,
+        warning: String?
+    ) {
         do {
-            return try CatalogDatabase(
-                path: applicationDirectory().appending(path: "catalog.sqlite").path
+            let directory = try applicationDirectory()
+            let catalog = try CatalogDatabase(
+                path: directory.appending(path: "catalog.sqlite").path
             )
+            let storage = LocalSessionStorage(
+                recordingsRoot: directory.appending(
+                    path: "Recordings",
+                    directoryHint: .isDirectory
+                )
+            )
+            return (catalog, storage, nil)
         } catch {
-            return try! CatalogDatabase(inMemory: true)
+            let failure = PersistenceUnavailableError(underlyingError: error)
+            let unavailableCatalog = UnavailableCatalog(failure: failure)
+            return (
+                unavailableCatalog,
+                UnavailableSessionStorage(failure: failure),
+                failure.errorDescription
+            )
         }
     }
 
-    private static func applicationDirectory() -> URL {
-        do {
-            let applicationSupport = try FileManager.default.url(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask,
-                appropriateFor: nil,
-                create: true
-            )
-            let directory = applicationSupport.appending(
-                path: "Observatory",
-                directoryHint: .isDirectory
-            )
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true
-            )
-            return directory
-        } catch {
-            let fallback = FileManager.default.temporaryDirectory.appending(
-                path: "Observatory",
-                directoryHint: .isDirectory
-            )
-            try? FileManager.default.createDirectory(
-                at: fallback,
-                withIntermediateDirectories: true
-            )
-            return fallback
-        }
+    private static func applicationDirectory() throws -> URL {
+        let applicationSupport = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let directory = applicationSupport.appending(
+            path: "Observatory",
+            directoryHint: .isDirectory
+        )
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        return directory
+    }
+}
+
+private struct PersistenceUnavailableError: LocalizedError, Sendable {
+    let detail: String
+
+    init(underlyingError: Error) {
+        detail = underlyingError.localizedDescription
+    }
+
+    var errorDescription: String? {
+        "Observatory storage is unavailable. Recording is disabled to protect your results. \(detail)"
+    }
+}
+
+private actor UnavailableCatalog: GroupingRulePersisting, SessionPersisting {
+    let failure: PersistenceUnavailableError
+
+    init(failure: PersistenceUnavailableError) {
+        self.failure = failure
+    }
+
+    func saveGroupingRule(_ rule: GroupingRule) throws { throw failure }
+    func groupingRules() throws -> [GroupingRule] { throw failure }
+    func deleteGroupingRule(id: UUID) throws { throw failure }
+    func resetGroupingRules(for application: ApplicationIdentity?) throws {
+        throw failure
+    }
+
+    func createSession(
+        _ session: MonitoringSession,
+        rounds: [SessionRound]
+    ) throws {
+        throw failure
+    }
+    func saveSession(_ session: MonitoringSession) throws { throw failure }
+    func session(id: UUID) throws -> MonitoringSession? { throw failure }
+    func sessions() throws -> [MonitoringSession] { throw failure }
+    func unfinishedControlledSession() throws -> MonitoringSession? {
+        throw failure
+    }
+    func saveRound(_ round: SessionRound) throws { throw failure }
+    func rounds(sessionID: UUID) throws -> [SessionRound] { throw failure }
+    func saveSample(_ sample: SessionMetricSample) throws { throw failure }
+    func samples(sessionID: UUID) throws -> [SessionMetricSample] { throw failure }
+    func replaceSummaries(
+        _ summaries: [ApplicationResultSummary],
+        sessionID: UUID
+    ) throws {
+        throw failure
+    }
+    func summaries(sessionID: UUID) throws -> [ApplicationResultSummary] {
+        throw failure
+    }
+    func deleteSamples(roundID: UUID) throws { throw failure }
+    func deleteSession(id: UUID) throws { throw failure }
+}
+
+private actor UnavailableSessionStorage: StorageRootAccessing {
+    let failure: PersistenceUnavailableError
+
+    init(failure: PersistenceUnavailableError) {
+        self.failure = failure
+    }
+
+    func sessionDirectory(named name: String, createdAt: Date) throws -> URL {
+        throw failure
+    }
+
+    func writeSummary(_ result: ControlledTestResult, to directory: URL) throws {
+        throw failure
+    }
+
+    func removeSessionDirectory(_ directory: URL) throws {
+        throw failure
     }
 }

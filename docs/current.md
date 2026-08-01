@@ -1,8 +1,10 @@
 # Current state
 
-Last updated: 2026-07-31
+Last updated: 2026-08-01
 
-Observatory 0.1 is feature-complete and published on GitHub.
+Observatory 0.1 is feature-complete and published on GitHub. The source tree
+also contains post-release high-priority reliability hardening that has not yet
+been packaged into a new downloadable archive.
 
 ## Included
 
@@ -16,6 +18,11 @@ Observatory 0.1 is feature-complete and published on GitHub.
 - Release archive and checksum tooling.
 - Observatory project, scheme, modules, source folders, and private storage
   identity throughout.
+- Atomic controlled-test creation and cancellation-safe sample cleanup.
+- Monotonic controlled-test timing with clock-change-safe result ordering.
+- Raw per-interval controlled-test metrics with round-boundary counter resets.
+- Explicit storage failure reporting instead of temporary or in-memory results.
+- A single app window and refreshed foreground/running-application state.
 
 The active product contract is in [`release-scope.md`](specifications/release-scope.md)
 and the feature specifications. Verification history is in
@@ -26,7 +33,8 @@ and the feature specifications. Verification history is in
 The source repository and downloadable `0.1.0` archive are published at
 [github.com/KidPudel/Observatory](https://github.com/KidPudel/Observatory).
 
-The remaining release gate is to use the
+The remaining release gates are to perform targeted hands-on validation of the
+hardening changes, then use the
 [`installation guide`](installation.md) to validate the archive on a clean
 macOS account. Track that check in
 [`release-checklist.md`](release-checklist.md).

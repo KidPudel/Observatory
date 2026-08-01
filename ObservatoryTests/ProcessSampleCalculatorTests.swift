@@ -65,6 +65,27 @@ struct ProcessSampleCalculatorTests {
     }
 
     @Test
+    func explicitResetPreventsPreRoundCountersFromLeakingIntoRates() {
+        var calculator = ProcessSampleCalculator()
+        _ = calculator.calculate(
+            from: raw(at: 1_000_000_000, cpu: 1_000_000_000, read: 1_000)
+        )
+
+        calculator.resetBaselines(for: [identity])
+        let firstRoundSample = calculator.calculate(
+            from: raw(at: 10_000_000_000, cpu: 9_000_000_000, read: 9_000)
+        )
+        let measuredSample = calculator.calculate(
+            from: raw(at: 11_000_000_000, cpu: 10_000_000_000, read: 10_000)
+        )
+
+        #expect(firstRoundSample.cpuCoreUsage == nil)
+        #expect(firstRoundSample.diskReadBytesPerSecond == nil)
+        #expect(measuredSample.cpuCoreUsage == 1)
+        #expect(measuredSample.diskReadBytesPerSecond == 1_000)
+    }
+
+    @Test
     func restartedIdentityCannotInheritCounters() {
         var calculator = ProcessSampleCalculator()
         _ = calculator.calculate(from: raw(at: 1_000_000_000, cpu: 1_000_000_000))

@@ -135,6 +135,46 @@ struct ControlledTestEngineTests {
     }
 
     @Test
+    func simultaneousEnginesCannotBothCreateControlledTests() async throws {
+        let database = try CatalogDatabase(inMemory: true)
+        let clock = AdvancingTestClock(date: Date(timeIntervalSince1970: 150))
+        let application = fixtureApplication()
+        let first = makeEngine(
+            database: database,
+            clock: clock,
+            application: application
+        )
+        let second = makeEngine(
+            database: database,
+            clock: clock,
+            application: application
+        )
+        let configuration = ControlledTestConfiguration(
+            measuredDuration: 10,
+            warmUpDuration: 0,
+            roundCount: 1
+        )
+
+        async let firstSession: MonitoringSession? = try? first.createSession(
+            name: "First simultaneous",
+            note: "",
+            applications: [application],
+            configuration: configuration
+        )
+        async let secondSession: MonitoringSession? = try? second.createSession(
+            name: "Second simultaneous",
+            note: "",
+            applications: [application],
+            configuration: configuration
+        )
+        let created = await [firstSession, secondSession].compactMap { $0 }
+
+        #expect(created.count == 1)
+        #expect(try await database.sessions().count == 1)
+        #expect(try await database.rounds(sessionID: created[0].id).count == 1)
+    }
+
+    @Test
     func relaunchMarksAnActiveRoundInterruptedAndOffersRecovery() async throws {
         let database = try CatalogDatabase(inMemory: true)
         let application = fixtureApplication()
@@ -211,6 +251,79 @@ struct ControlledTestEngineTests {
         #expect(try await database.session(id: session.id) == nil)
         #expect(await engine.state().session == nil)
         #expect(await storage.removedDirectoryCount == 1)
+    }
+
+    @Test
+    func discardWaitsForInFlightSamplingAndLeavesNoOrphanSamples() async throws {
+        let database = try CatalogDatabase(inMemory: true)
+        let clock = AdvancingTestClock(date: Date(timeIntervalSince1970: 850))
+        let application = fixtureApplication()
+        let sampler = SuspendedSessionSampler(application: application.identity)
+        let engine = ControlledTestEngine(
+            persistence: database,
+            sampler: sampler,
+            storage: TestSessionStorage(),
+            clock: clock
+        )
+        let session = try await engine.createSession(
+            name: "Cancel during sample",
+            note: "",
+            applications: [application],
+            configuration: ControlledTestConfiguration(
+                measuredDuration: 10,
+                warmUpDuration: 0,
+                roundCount: 1
+            )
+        )
+        try await engine.startNextRound()
+        for _ in 0..<400 where !(await sampler.hasStarted()) {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        #expect(await sampler.hasStarted())
+
+        let cancellation = Task {
+            try await engine.cancel(preservingPartialResult: false)
+        }
+        await sampler.release()
+        try await cancellation.value
+
+        #expect(try await database.session(id: session.id) == nil)
+        #expect(try await database.samples(sessionID: session.id).isEmpty)
+    }
+
+    @Test
+    func wallClockRollbackDoesNotChangeMeasuredCadence() async throws {
+        let database = try CatalogDatabase(inMemory: true)
+        let clock = AdvancingTestClock(date: Date(timeIntervalSince1970: 900))
+        let application = fixtureApplication()
+        let engine = ControlledTestEngine(
+            persistence: database,
+            sampler: WallClockShiftingSessionSampler(
+                application: application.identity,
+                clock: clock
+            ),
+            storage: TestSessionStorage(),
+            clock: clock
+        )
+        _ = try await engine.createSession(
+            name: "Wall clock rollback",
+            note: "",
+            applications: [application],
+            configuration: ControlledTestConfiguration(
+                measuredDuration: 3,
+                warmUpDuration: 0,
+                roundCount: 1
+            )
+        )
+
+        try await engine.startNextRound()
+        try await waitForStatus(.completed, engine: engine)
+        let state = await engine.state()
+        let result = try #require(
+            try await engine.result(sessionID: state.session!.id)
+        )
+
+        #expect(result.samples.map(\.elapsed) == [0, 1, 2])
     }
 
     @Test
@@ -410,6 +523,7 @@ private struct TestTimeout: Error {}
 
 private actor AdvancingTestClock: ObservatoryClock {
     private var date: Date
+    private var monotonic = Duration.zero
 
     init(date: Date) {
         self.date = date
@@ -417,6 +531,10 @@ private actor AdvancingTestClock: ObservatoryClock {
 
     var now: Date {
         get async { date }
+    }
+
+    var monotonicNow: Duration {
+        get async { monotonic }
     }
 
     func sleep(for duration: Duration) async throws {
@@ -430,6 +548,11 @@ private actor AdvancingTestClock: ObservatoryClock {
         let seconds = Double(components.seconds)
             + Double(components.attoseconds) / 1_000_000_000_000_000_000
         date = date.addingTimeInterval(seconds)
+        monotonic += duration
+    }
+
+    func shiftWallClock(by interval: TimeInterval) {
+        date = date.addingTimeInterval(interval)
     }
 }
 
@@ -480,6 +603,68 @@ private struct WorkAdvancingSessionSampler: SessionMetricSampling {
             sessionID: sessionID,
             at: date
         )
+    }
+}
+
+private actor WallClockShiftingSessionSampler: SessionMetricSampling {
+    let application: ApplicationIdentity
+    let clock: AdvancingTestClock
+    private var shifted = false
+
+    init(application: ApplicationIdentity, clock: AdvancingTestClock) {
+        self.application = application
+        self.clock = clock
+    }
+
+    func readings(
+        for applications: [ApplicationIdentity],
+        sessionID: UUID,
+        at date: Date
+    ) async -> [ApplicationMetricReading] {
+        if !shifted {
+            shifted = true
+            await clock.shiftWallClock(by: -3_600)
+        }
+        return await FixedSessionSampler(application: application).readings(
+            for: applications,
+            sessionID: sessionID,
+            at: date
+        )
+    }
+}
+
+private actor SuspendedSessionSampler: SessionMetricSampling {
+    let application: ApplicationIdentity
+    private var started = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    init(application: ApplicationIdentity) {
+        self.application = application
+    }
+
+    func readings(
+        for applications: [ApplicationIdentity],
+        sessionID: UUID,
+        at date: Date
+    ) async -> [ApplicationMetricReading] {
+        started = true
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+        return await FixedSessionSampler(application: application).readings(
+            for: applications,
+            sessionID: sessionID,
+            at: date
+        )
+    }
+
+    func hasStarted() -> Bool {
+        started
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
     }
 }
 

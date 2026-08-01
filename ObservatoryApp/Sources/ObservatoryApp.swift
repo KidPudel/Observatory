@@ -10,7 +10,7 @@ struct ObservatoryApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        Window("Observatory", id: "main") {
             RootView()
                 .environmentObject(settingsPresentation)
         }
